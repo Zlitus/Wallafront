@@ -1,0 +1,348 @@
+<html>
+	<head>
+		<title>Wallabag tool</title>
+		<meta charset="utf-8" />
+		<style>
+		body { background: black; color: white }
+
+		.flex { display: flex; }
+		.center { text-align: center; }
+		.v { flex-direction: column; }
+
+		.container { font-size: 2em; max-width: 22em; margin: auto; background: #272821; padding: 1em; display: flex; flex-direction: column; }
+		.container .link { color: white; text-decoration: underline; }
+		.container .name { margin: 0; font-size: 1.5em }
+		.container .button { text-align: center }
+		.container .input, .container .button { display: block; padding: .4em; font-size: 1em; width: 100%; border: 1px solid; background: #D4D4D6 }
+		.container .input:hover, .container .input:focus, .container .button:hover, .container .button:focus { background: #F6F6F7 }
+
+		.entries { display: block; margin: 0; padding: 0 }
+		.entry { display: block; }
+		.entry label:hover, .entry .link:hover { background: #E58237 }
+		.entry + .entry { margin-top: 1em }
+		.entry .icon { color: #FF0071; cursor: help; }
+
+		input[type="checkbox"] { width: 2em; height: 2em; background: white; -webkit-appearance: none; border: 1px solid black; vertical-align: middle; }
+		input[type="checkbox"]:checked {
+			background: #FF903C
+		}
+		input[disabled], button[disabled] { opacity: .7; cursor: not-allowed; }
+		</style>
+	</head>
+	<body>
+		<script src="https://unpkg.com/mithril/mithril.js"></script>
+		<script>
+		(() => {
+			var root = document.body;
+
+			var baseUrl = 'https://app.wallabag.it/';
+			var sessionSrv = {
+				data: {},
+				create: function(session) {
+					try {
+						localStorage.setItem('wgSession', JSON.stringify(session));
+					} catch (e) {
+						sessionStorage.setItem('wgSession', JSON.stringify(session));
+					}
+
+					this.data = session;
+				},
+				load: function() {
+					var local;
+					try {
+						 local = localStorage.getItem('wgSession');
+					} catch (e) {
+						local = sessionStorage.getItem('wgSession');
+					}
+
+					if (!local) {
+						return;
+					}
+
+					this.data = JSON.parse(local);
+					if (this.data.baseUrl) {
+						baseUrl = this.data.baseUrl;
+					}
+					return this.data;
+				},
+				get: function() {
+					return this.data;
+				},
+				clear: function() {
+					this.data = {};
+					localStorage.removeItem('wgSession');
+					m.route.set('/');
+				}
+			};
+
+			var wallabagSrv = {
+				login: (username, password, clientId, clientSecret) => {
+					return m.request({
+						method: 'POST',
+						url: baseUrl+'oauth/v2/token',
+						data: {
+							grant_type: 'password',
+							client_id: clientId,
+							client_secret: clientSecret,
+							username: username,
+							password: password
+						}
+					});
+				},
+				getEntries: () => {
+					return m.request({
+						method: 'GET',
+						url: baseUrl+'api/entries.json',
+						headers: {
+							Authorization: 'Bearer '+sessionSrv.data.userdata.access_token
+						}
+					});
+				},
+				/*
+					Unfortunately, Wallabag don't have (yet?) a “bulk” API. So,
+					we have to update/remove/… each entry one by one.
+				*/
+				updateEntry: (id, body) => {
+					return m.request({
+						method: 'PATCH',
+						url: baseUrl+'api/entries/'+id+'.json',
+						headers: {
+							Authorization: 'Bearer '+sessionSrv.data.userdata.access_token
+						},
+						data: body
+					});
+				},
+				removeEntry: (id) => {
+					return m.request({
+						method: 'DELETE',
+						url: baseUrl+'api/entries/'+id+'.json',
+						headers: {
+							Authorization: 'Bearer '+sessionSrv.data.userdata.access_token
+						}
+					});
+				},
+				tagEntry: (id, tags) => {
+					return m.request({
+						method: 'POST',
+						url: baseUrl+'api/entries/'+id+'/tags.json',
+						headers: {
+							Authorization: 'Bearer '+sessionSrv.data.userdata.access_token
+						},
+						data: {
+							tags: tags
+						}
+					});
+				}
+			};
+
+			var loginFormView = {
+				data: {
+					clientId: '',
+					clientSecret: '',
+					username: '',
+					password: ''
+				},
+				oninit: () => {
+					var data = sessionSrv.load();
+					if (data) {
+						m.route.set('/list')
+					}
+				},
+				view: () => {
+					return m('main', [
+						m('form.loginForm.container', {
+							onsubmit: (e) => {
+								e.target.querySelector('[type="submit"]').setAttribute('disabled', true)
+								wallabagSrv.login(
+									loginFormView.data.username,
+									loginFormView.data.password,
+									loginFormView.data.clientId,
+									loginFormView.data.clientSecret
+								).then((res) => {
+									sessionSrv.create({
+										baseUrl: baseUrl,
+										username: loginFormView.data.username,
+										userdata: res
+									});
+									m.route.set('/list');
+								}, (err) => {
+									e.target.querySelector('[type="submit"]').removeAttribute('disabled');
+									alert('Error!');
+									console.log(err);
+								});
+								return false;
+							}
+						}, [
+							m('h1.name', 'Please login:'),
+							m('input.input[type="url"][placeholder="Wallabag url"]', {
+								value: baseUrl,
+								oninput: m.withAttr('value', (value) => {baseUrl = value;})
+							}),
+							m('input.input[type="text"][placeholder="Client ID"]', {
+								value: loginFormView.data.clientId,
+								oninput: m.withAttr('value', (value) => {loginFormView.data.clientId = value;})
+							}),
+							m('input.input[type="text"][placeholder="Client Secret"]', {
+								value: loginFormView.data.clientSecret,
+								oninput: m.withAttr('value', (value) => {loginFormView.data.clientSecret = value;})
+							}),
+							m('input.input[type="text"][placeholder="Username"]', {
+								value: loginFormView.data.username,
+								oninput: m.withAttr('value', (value) => {loginFormView.data.username = value;})
+							}),
+							m('input.input[type="password"][placeholder="Password"]', {
+								value: loginFormView.data.password,
+								oninput: m.withAttr('value', (value) => {loginFormView.data.password = value;})
+							}),
+							m('button.button[type="submit"]', 'Login')
+						])
+					]);
+				}
+			};
+
+			var listView = {
+				data: {
+					articles: [],
+					getSelection: function() {
+						return this.articles.filter((entry) => {
+							if (entry.selected) {
+								return true;
+							}
+						});
+					},
+					updateSelection: async function(body) {
+						var selection = this.getSelection();
+
+						for (entry of selection) {
+							await wallabagSrv.updateEntry(entry.id, body).then((res) => {
+								console.log(res.id+' is updated!');
+							}, (err) => {
+								alert('Error!');
+								console.error('Error!!!', err);
+							});
+						}
+
+						listView.oninit();
+					},
+					removeSelection: async function() {
+						var selection = this.getSelection();
+
+						for (entry of selection) {
+							await wallabagSrv.removeEntry(entry.id).then((res) => {
+								console.log(res.id+' is removed!');
+							}, (err) => {
+								alert('Error!');
+								console.error('Error!!!', err);
+							});
+						}
+
+						listView.oninit();
+					},
+					tagSelection: async function(tags) {
+						var selection = this.getSelection();
+
+						for (entry of selection) {
+							await wallabagSrv.tagEntry(entry.id, tags).then((res) => {
+								console.log(res.id+' is tagged!');
+							}, (err) => {
+								alert('Error!');
+								console.error('Error!!!', err);
+							});
+						}
+
+						listView.oninit();
+					}
+				},
+				oninit: function() {
+					if (!sessionSrv.load()) {
+						m.route.set('/');
+					}
+
+					return wallabagSrv.getEntries().then((res) => {
+						this.data.articles = res._embedded.items;
+
+						/* Need to be improved: */
+						for (checkbox of document.querySelectorAll(':checked')) {
+							checkbox.checked = false;
+						}
+					}, (err) => {
+						alert('Error!');
+						console.error(err);
+					});
+				},
+				view: function() {
+					return m('div.container.list', [
+						m('div.center', [
+							m('span.name', ['Hello ', sessionSrv.data.username]),
+							m('div.flex', [
+								m('button.button', {
+									onclick: () => {
+										this.oninit();
+									}
+								}, 'Refresh'),
+								m('button.button', {
+									onclick: () => {
+										sessionSrv.clear();
+									}
+								}, 'Log out'),
+							])
+						]),
+						m('div.toolbar', [
+							m('fieldset.flex', [
+								m('legend', 'Apply to selection:'),
+								m('button.button', {onclick: () => {this.data.updateSelection({starred: 0});}}, 'Un'),
+								m('button.button', {onclick: () => {this.data.updateSelection({starred: 1});}}, 'Star'),
+								m('button.button', {onclick: () => {this.data.updateSelection({archive: 0});}}, 'Un'),
+								m('button.button', {onclick: () => {this.data.updateSelection({archive: 1});}}, 'Archive'),
+								m('button.button', {onclick: () => {this.data.removeSelection();}}, 'Remove'),
+								m('button.button', {onclick: () => {
+									var tags = prompt('Enter your tags separated by comma');
+									if (!tags) {
+										return;
+									}
+									this.data.tagSelection(tags.split(','));
+								}}, 'Tag')
+							])
+						]),
+						m('ul.entries', this.data.articles.map((li) => {
+							return m('li.entry', {
+								style: (li.is_starred ? 'background:rgba(229,130,55,.5)': '')
+							}, [
+								m('label', [
+									m('input[type="checkbox"]', {
+										onchange: (e) => {
+											if (e.target.checked) {
+												li.selected = true;
+											} else {
+												li.selected = false;
+											}
+										}
+									}),
+									' ',
+									li.title
+								]), ' ',
+								(
+									li.tags && li.tags.length
+										? (m('span.icon', {title: li.tags.map((tag) => { return tag.label; }).join('\n')}, 'ℹ️'))
+										: undefined
+								),
+								(li.is_starred ? m('span.icon[title="Starred"]', '✪') : undefined),
+								(li.is_archived ? m('span.icon[title="Archived"]', '♺') : undefined),
+								' ',
+								m('a.link', {
+									href: li.url
+								}, '[Read]')
+							]);
+						}))
+					]);
+				}
+			};
+
+			m.route(document.body, '/login', {
+				'/login': loginFormView,
+				'/list': listView
+			});
+		})();
+		</script>
+	</body>
+</html>
