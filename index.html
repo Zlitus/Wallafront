@@ -89,10 +89,17 @@
 						}
 					});
 				},
-				getEntries: () => {
+				getEntries: (params) => {
+					var url = baseUrl+'api/entries.json';
+					if (params) {
+						url += '?';
+						for (param of Object.entries(params)) {
+							url += param[0]+'='+param[1];
+						}
+					}
 					return m.request({
 						method: 'GET',
-						url: baseUrl+'api/entries.json',
+						url: url,
 						headers: {
 							Authorization: 'Bearer '+sessionSrv.data.userdata.access_token
 						}
@@ -251,6 +258,20 @@
 						}
 
 						listView.oninit();
+					},
+					getPage: function(n) {
+						return wallabagSrv.getEntries({page: n}).then((res) => {
+							this.articles = this.articles.concat(res._embedded.items);
+
+							if (res.page < res.pages) {
+								this.nextPage = res.page+1;
+							} else {
+								this.nextPage = false;
+							}
+						}, (err) => {
+							alert('Error!');
+							console.error(err);
+						});
 					}
 				},
 				oninit: function() {
@@ -264,6 +285,12 @@
 						/* Need to be improved: */
 						for (checkbox of document.querySelectorAll(':checked')) {
 							checkbox.checked = false;
+						}
+
+						if (res.page < res.pages) {
+							this.data.nextPage = res.page+1;
+						} else {
+							this.data.nextPage = false;
 						}
 					}, (err) => {
 						alert('Error!');
@@ -333,7 +360,10 @@
 									href: li.url
 								}, '[Read]')
 							]);
-						}))
+						})),
+						this.data.nextPage ? m('button.button', {onclick: () => {
+							this.data.getPage(this.data.nextPage)
+						}}, 'Load more') : undefined
 					]);
 				}
 			};
